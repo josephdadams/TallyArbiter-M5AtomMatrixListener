@@ -42,6 +42,9 @@ String DeviceName = "unassigned";
 String ListenerType = "m5";
 bool mode_preview = true;
 bool mode_program = false;
+const unsigned long reconnectInterval = 5000;
+unsigned long currentReconnectTime = 0;
+bool isReconnecting = false;
 // const byte led_program = 10;
 
 
@@ -334,10 +337,19 @@ void socket_Reassign(const char * payload, size_t length) {
   logger("Socket Reassign pt2: " + String(newDeviceId), "info-quiet");
 }
 
+void startReconnect() {
+  if (!isReconnecting)
+  {
+    isReconnecting = true;
+    currentReconnectTime = millis();
+  }
+}
+
 void connectToServer() {
   logger("---------------------------------", "info-quiet");
   logger("Connecting to Tally Arbiter host: " + String(tallyarbiter_host), "info-quiet");
   socket.on("connect", socket_Connected);
+  socket.on("disconnect", socket_Disconnected);
   socket.on("bus_options", socket_BusOptions);
   socket.on("deviceId", socket_DeviceId);
   socket.on("devices", socket_Devices);
@@ -351,6 +363,7 @@ void connectToServer() {
 void socket_Connected(const char * payload, size_t length) {
   logger("---------------------------------", "info-quiet");
   logger("Connected to Tally Arbiter host: " + String(tallyarbiter_host), "info-quiet");
+  isReconnecting = false;
   String deviceObj = "{\"deviceId\": \"" + DeviceId + "\", \"listenerType\": \"" + ListenerType + "\"}";
   logger("deviceObj = " + String(deviceObj), "info-quiet");
   logger("DeviceId = " + String(DeviceId), "info-quiet");
@@ -360,6 +373,12 @@ void socket_Connected(const char * payload, size_t length) {
   socket.emit("device_listen_m5", charDeviceObj);
   logger("charDeviceObj = " + String(charDeviceObj), "info-quiet");
   logger("---------------------------------", "info-quiet");
+}
+
+void socket_Disconnected(const char * payload, size_t length) {
+  logger("Disconnected from server, will try to re-connect: " + String(payload), "info-quiet");
+  Serial.println("disconnected, going to try to reconnect");
+  startReconnect();
 }
 
 void socket_BusOptions(const char * payload, size_t length) {
@@ -378,7 +397,6 @@ void socket_DeviceId(const char * payload, size_t length) {
   DeviceId = String(payload);
   setDeviceName();
 }
-
 
 void processTallyData() {
   for (int i = 0; i < DeviceStates.length(); i++) {
@@ -509,6 +527,16 @@ void loop()
     }
   }
 
+  // handle reconnecting if disconnected
+  if (isReconnecting)
+  {
+    if (currentTime - currentReconnectTime >= reconnectInterval)
+    {
+      Serial.println("trying to re-connect with server");
+      connectToServer();
+      currentReconnectTime = millis();
+    }
+  }
   delay(50);
   M5.update();
 }
